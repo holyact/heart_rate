@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>스마트 심박측정기 (Smart Heart Rate Monitor)</title>
+    <!-- Tailwind CSS 로드 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome 아이콘 로드 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts Inter & Noto Sans KR -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+KR:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', 'Noto Sans KR', sans-serif;
+            background-color: #0f172a;
+            -webkit-tap-highlight-color: transparent;
+        }
+        /* 커스텀 맥박 애니메이션 */
+        @keyframes pulse-ring {
+            0% { transform: scale(0.95); opacity: 0.8; }
+            50% { transform: scale(1.1); opacity: 0.4; }
+            100% { transform: scale(0.95); opacity: 0.8; }
+        }
+        .pulse-active {
+            animation: pulse-ring 1.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        /* 스크롤바 숨기기 */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+</head>
+<body class="text-slate-100 min-h-screen flex flex-col justify-between overflow-x-hidden">
+
+<!-- 상단 고정 헤더 -->
+<header class="bg-slate-900/80 backdrop-blur-md border-b border-slate-800 sticky top-0 z-50 px-4 py-3">
+    <div class="max-w-md mx-auto flex items-center justify-between">
+        <div class="flex items-center gap-2">
+            <div class="w-8 h-8 rounded-lg bg-rose-500 flex items-center justify-center shadow-lg shadow-rose-500/30">
+                <i class="fa-solid fa-heart-pulse text-white animate-pulse"></i>
+            </div>
+            <div>
+                <h1 class="text-md font-bold text-white tracking-tight">Smart Pulse</h1>
+                <p class="text-[10px] text-slate-400">Android 모바일 최적화</p>
+            </div>
+        </div>
+        <!-- 상태 표시 배지 -->
+        <span id="connection-status" class="text-xs bg-slate-800 text-slate-300 px-2.5 py-1 rounded-full flex items-center gap-1.5 border border-slate-700">
+            <span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse" id="status-dot"></span>
+            <span id="status-text">카메라 대기 중</span>
+        </span>
+    </div>
+</header>
+
+<!-- 메인 앱 컨텐츠 영역 -->
+<main class="flex-1 max-w-md w-full mx-auto px-4 py-6 flex flex-col justify-start gap-6">
+
+    <!-- 스마트폰 측정 안내 카드 -->
+    <section class="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 shadow-xl">
+        <h2 class="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
+            <i class="fa-solid fa-circle-info text-rose-400"></i> 올바른 측정 방법
+        </h2>
+        <div class="grid grid-cols-3 gap-3 text-center text-[11px] text-slate-400">
+            <div class="bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/80 flex flex-col items-center gap-1">
+                <div class="w-7 h-7 rounded-full bg-rose-500/10 text-rose-400 flex items-center justify-center font-bold">1</div>
+                <span>카메라 렌즈 위에 검지 손가락 밀착</span>
+            </div>
+            <div class="bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/80 flex flex-col items-center gap-1">
+                <div class="w-7 h-7 rounded-full bg-rose-500/10 text-rose-400 flex items-center justify-center font-bold">2</div>
+                <span>플래시가 켜지면 붉은빛 감지 시작</span>
+            </div>
+            <div class="bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/80 flex flex-col items-center gap-1">
+                <div class="w-7 h-7 rounded-full bg-rose-500/10 text-rose-400 flex items-center justify-center font-bold">3</div>
+                <span>측정이 끝날 때까지 15초간 대기</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- 모드 선택 탭 (실제 카메라 측정 vs 데모 시뮬레이션) -->
+    <div class="bg-slate-950 p-1 rounded-xl flex border border-slate-800">
+        <button id="btn-camera-mode" class="flex-1 py-2 text-xs font-medium rounded-lg bg-slate-800 text-white transition-all duration-200">
+            <i class="fa-solid fa-camera mr-1"></i> 카메라 측정
+        </button>
+        <button id="btn-demo-mode" class="flex-1 py-2 text-xs font-medium rounded-lg text-slate-400 hover:text-white transition-all duration-200">
+            <i class="fa-solid fa-wand-magic-sparkles mr-1"></i> 시뮬레이션 모드
+        </button>
+    </div>
+
+    <!-- 핵심 측정 시각화 패널 -->
+    <section class="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl relative overflow-hidden flex flex-col items-center">
+        <!-- 배경 네온 광원 효과 -->
+        <div class="absolute -top-10 -left-10 w-40 h-40 bg-rose-600/10 rounded-full blur-3xl pointer-events-none"></div>
+        <div class="absolute -bottom-10 -right-10 w-40 h-40 bg-emerald-600/10 rounded-full blur-3xl pointer-events-none"></div>
+
+        <!-- 측정 상태 알림 팝업 스타일 -->
+        <div id="finger-warning" class="hidden absolute top-4 bg-amber-500/90 text-slate-950 text-xs font-bold px-4 py-1.5 rounded-full shadow-lg items-center gap-2 animate-bounce z-10">
+            <i class="fa-solid fa-fingerprint"></i> 손가락을 카메라에 밀착시켜 주세요!
+        </div>
+
+        <!-- 중앙 측정 다이얼 -->
+        <div class="relative w-52 h-52 flex items-center justify-center my-4">
+            <!-- 바깥쪽 진행 회전링 -->
+            <svg class="absolute inset-0 w-full h-full transform -rotate-90">
+                <circle cx="104" cy="104" r="92" stroke="#1e293b" stroke-width="8" fill="transparent"></circle>
+                <circle id="progress-ring" cx="104" cy="104" r="92" stroke="#ef4444" stroke-width="8" fill="transparent" 
+                        stroke-dasharray="578" stroke-dashoffset="578" stroke-linecap="round" class="transition-all duration-200"></circle>
+            </svg>
+
+            <!-- 안쪽 측정 인터랙티브 원형 영역 -->
+            <button id="btn-pulse-trigger" class="w-40 h-40 rounded-full bg-slate-950 border border-slate-800 flex flex-col items-center justify-center gap-1 hover:border-rose-500/50 transition-all active:scale-95 shadow-inner focus:outline-none relative group">
+                <div id="pulse-bg" class="absolute inset-0 rounded-full bg-rose-500/0 transition-all duration-300 group-hover:bg-rose-500/5"></div>
+                
+                <!-- 현재 박동 아이콘 및 애니메이션 -->
+                <div id="heart-container" class="relative z-10">
+                    <i id="main-heart-icon" class="fa-solid fa-heart text-slate-600 text-4xl transition-colors duration-300"></i>
+                </div>
+                
+                <!-- BPM 수치 디스플레이 -->
+                <div class="z-10 mt-1">
+                    <span id="bpm-value" class="text-4xl font-black text-slate-300">--</span>
+                    <span class="text-[11px] text-slate-500 font-bold block text-center" id="bpm-unit">BPM</span>
+                </div>
+                <div id="measure-instruction" class="text-[10px] text-slate-500 font-semibold z-10 text-center px-4 leading-tight">
+                    터치하여 측정 시작
+                </div>
+            </button>
+        </div>
+
+        <!-- 리얼타임 맥박 파형 그래프 (PPG / ECG) -->
+        <div class="w-full mt-4">
+            <div class="flex justify-between items-center text-[10px] text-slate-500 font-bold px-1 mb-1.5">
+                <span>실시간 맥박 파형 (PPG)</span>
+                <span id="fps-counter" class="text-slate-600">FPS: 0</span>
+            </div>
+            <div class="bg-slate-950/80 rounded-xl border border-slate-800/80 p-2 relative h-20">
+                <canvas id="ppg-canvas" class="w-full h-full"></canvas>
+            </div>
+        </div>
+
+        <!-- 부가 사운드 활성화 스위치 -->
+        <div class="flex justify-between items-center w-full mt-4 px-1">
+            <span class="text-xs text-slate-400 font-medium">박동 신호음 피드백</span>
+            <button id="btn-sound-toggle" class="text-xs font-semibold px-3 py-1.5 bg-slate-950 border border-slate-800 hover:border-slate-700 rounded-lg text-slate-400 transition-colors flex items-center gap-1.5">
+                <i class="fa-solid fa-volume-xmark" id="sound-icon"></i> <span id="sound-status">꺼짐</span>
+            </button>
+        </div>
+    </section>
+
+    <!-- 실제 카메라 처리를 위한 비디오 엘리먼트 (보안 및 연산 효율을 위해 크기를 최소화하여 보이지 않게 처리) -->
+    <div class="hidden">
+        <video id="webcam-video" autoplay playsinline muted width="120" height="120"></video>
+        <canvas id="analysis-canvas" width="30" height="30"></canvas>
+    </div>
+
+    <!-- 과거 심박수 측정 이력 리스트 -->
+    <section class="flex-1 bg-slate-900/60 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col min-h-[180px]">
+        <div class="flex justify-between items-center mb-3">
+            <h3 class="text-sm font-semibold text-slate-300 flex items-center gap-2">
+                <i class="fa-solid fa-clock-rotate-left text-teal-400"></i> 최근 심박 측정 이력
+            </h3>
+            <button id="btn-clear-history" class="text-[10px] text-slate-500 hover:text-rose-400 transition-colors font-bold">
+                이력 초기화
+            </button>
+        </div>
+        
+        <!-- 이력 리스트 컨테이너 -->
+        <div id="history-list" class="flex-1 overflow-y-auto max-h-48 pr-1 no-scrollbar space-y-2 flex flex-col justify-start">
+            <!-- 비어있을 때의 기본 안내 메시지 -->
+            <div id="history-empty" class="my-auto text-center py-6 text-slate-500">
+                <i class="fa-solid fa-clipboard-list text-3xl mb-2 text-slate-700"></i>
+                <p class="text-xs">기록된 측정 결과가 없습니다.<br>첫 측정을 시작해 보세요!</p>
+            </div>
+        </div>
+    </section>
+
+</main>
+
+<!-- 하단 정보 및 가이드라인 푸터 -->
+<footer class="bg-slate-950 border-t border-slate-900 py-4 text-center px-4">
+    <div class="max-w-md mx-auto text-[11px] text-slate-500 leading-relaxed">
+        <p class="font-bold text-amber-500/80 mb-1 flex items-center justify-center gap-1">
+            <i class="fa-solid fa-triangle-exclamation"></i> 의료용 기기가 아닙니다
+        </p>
+        <p>본 앱은 학술 및 시뮬레이션 목적으로 제작된 간이 측정 도구입니다. 정확한 건강 지표 확인은 반드시 전문 의료기관 및 승인된 장비를 사용하시기 바랍니다.</p>
+    </div>
+</footer>
+
+<script>
+/* -------------------------------------------------------------
+   스마트폰 사운드 피드백을 위한 Web Audio API 모듈
+------------------------------------------------------------- */
+class HeartSound {
+    constructor() {
+        this.ctx = null;
+        this.isEnabled = false;
+    }
+
+    init() {
+        if (!this.ctx) {
+            this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+    }
+
+    playBeep() {
+        if (!this.isEnabled || !this.ctx) return;
+        this.init();
+        
+        // 박동 효과음 생성 (부드러운 Sine 파형 사용)
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(150, this.ctx.currentTime); // 낮은 심장 박동음 피치
+        osc.frequency.exponentialRampToValueAtTime(80, this.ctx.currentTime + 0.1);
+        
+        gain.gain.setValueAtTime(0.4, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.15);
+        
+        osc.start();
+        osc.stop(this.ctx.currentTime + 0.16);
+    }
+}
+
+const heartSound = new HeartSound();
+
+/* -------------------------------------------------------------
+   메인 측정 로직 및 알고리즘 모듈
+------------------------------------------------------------- */
+// DOM 요소 모음
+const video = document.getElementById('webcam-video');
+const analysisCanvas = document.getElementById('analysis-canvas');
+const analysisCtx = analysisCanvas.getContext('2d', { willReadFrequently: true });
+const ppgCanvas = document.getElementById('ppg-canvas');
+const ppgCtx = ppgCanvas.getContext('2d');
+
+const btnPulseTrigger = document.getElementById('btn-pulse-trigger');
+const progressRing = document.getElementById('progress-ring');
+const bpmValue = document.getElementById('bpm-value');
+const bpmUnit = document.getElementById('bpm-unit');
+const measureInstruction = document.getElementById('measure-instruction');
+const heartContainer = document.getElementById('heart-container');
+const mainHeartIcon = document.getElementById('main-heart-icon');
+const pulseBg = document.getElementById('pulse-bg');
+const fingerWarning = document.getElementById('finger-warning');
+
+const btnCameraMode = document.getElementById('btn-camera-mode');
+const btnDemoMode = document.getElementById('btn-demo-mode');
+const btnSoundToggle = document.getElementById('btn-sound-toggle');
+const soundIcon = document.getElementById('sound-icon');
+const soundStatus = document.getElementById('sound-status');
+const btnClearHistory = document.getElementById('btn-clear-history');
+const historyList = document.getElementById('history-list');
+const historyEmpty = document.getElementById('history-empty');
+
+const connectionStatus = document.getElementById('connection-status');
+const statusDot = document.getElementById('status-dot');
+const statusText = document.getElementById('status-text');
+const fpsCounter = document.getElementById('fps-counter');
+
+// 전역 설정 및 상태 변수
+let isMeasuring = false;
+let currentMode = 'camera'; // 'camera' or 'demo'
+let localStream = null;
+let animationFrameId = null;
+let lastFrameTime = performance.now();
+let fps = 0;
+
+// PPG 신호 및 BPM 계산 버퍼
+let signalBuffer = []; // { time, value } 객체 보관
+const maxBufferSize = 240; // 최대 4~6초 버퍼 유지
+let filteredSignal = []; // 필터링된 맥파 신호
+let lowPassFilterValue = 0;
+let peakTimes = []; // 실시간 감지된 피크 시간들
+let bpmMovingAverage = []; // 심박수 스무딩 버퍼
+
+// 시뮬레이션 모드 변수
+let simPhase = 0;
+
+// UI 전반 제어 변수
+let measurementProgress = 0; // 0 to 100
+let measurementTimer = null;
+const measurementDuration = 15000; // 15초 동안 정밀 측정
+let measurementStartTime = 0;
+let finalBpmResult = 0;
+
+/* -------------------------------------------------------------
+   실시간 PPG 파형 캔버스 그리기 함수
+------------------------------------------------------------- */
+// 화면 크기에 맞게 맥파 그래프 캔버스 리사이징
+function resizePpgCanvas() {
+    const dpr = window.devicePixelRatio || 1;
+    const rect = ppgCanvas.getBoundingClientRect();
+    ppgCanvas.width = rect.width * dpr;
+    ppgCanvas.height = rect.height * dpr;
+    ppgCtx.scale(dpr, dpr);
+}
+window.addEventListener('resize', resizePpgCanvas);
+resizePpgCanvas();
+
+function drawPpgGraph() {
+    const width = ppgCanvas.width / (window.devicePixelRatio || 1);
+    const height = ppgCanvas.height / (window.devicePixelRatio || 1);
+    
+    // 캔버스 클리어
+    ppgCtx.clearRect(0, 0, width, height);
+    
+    // 격자 가이드선 그리기
+    ppgCtx.strokeStyle = '#1e293b';
+    ppgCtx.lineWidth = 1;
+    for(let i = 0; i < width; i += 30) {
+        ppgCtx.beginPath();
+        ppgCtx.moveTo(i, 0);
+        ppgCtx.lineTo(i, height);
+        ppgCtx.stroke();
+    }
+    for(let j = 0; j < height; j += 20) {
+        ppgCtx.beginPath();
+        ppgCtx.moveTo(0, j);
+        ppgCtx.lineTo(width, j);
+        ppgCtx.stroke();
+    }
+
+    if (filteredSignal.length < 2) {
+        // 데이터 대기 상태 라인
+        ppgCtx.beginPath();
+        ppgCtx.strokeStyle = '#475569';
+        ppgCtx.lineWidth = 2;
+        ppgCtx.moveTo(0, height / 2);
+        ppgCtx.lineTo(width, height / 2);
+        ppgCtx.stroke();
+        return;
+    }
+
+    // 신호의 최대, 최소값을 찾아 오토 스케일링
+    let minSig = Math.min(...filteredSignal);
+    let maxSig = Math.max(...filteredSignal);
+    let range = maxSig - minSig;
+    if (range < 0.1) range = 0.1; // 0 분모 방지
+
+    ppgCtx.beginPath();
+    ppgCtx.strokeStyle = isMeasuring ? '#f43f5e' : '#10b981'; // 측정 중일 땐 붉은색, 아닐 땐 녹색 파형
+    ppgCtx.lineWidth = 2.5;
+    ppgCtx.lineJoin = 'round';
+
+    const pointsToDraw = Math.min(filteredSignal.length, 120);
+    const startIdx = filteredSignal.length - pointsToDraw;
+    
+    for (let i = 0; i < pointsToDraw; i++) {
+        const val = filteredSignal[startIdx + i];
+        // 정규화 후 화면 좌표계로 매핑 (위아래 여백을 둠)
+        const normY = (val - minSig) / range;
+        const x = (i / (pointsToDraw - 1)) * width;
+        const y = height - 10 - normY * (height - 20);
+
+        if (i === 0) {
+            ppgCtx.moveTo(x, y);
+        } else {
+            ppgCtx.lineTo(x, y);
+        }
+    }
+    ppgCtx.stroke();
+}
+
+/* -------------------------------------------------------------
+   STREAMING_CHUNK: PPG 알고리즘 및 영상 프레임 분석 처리...
+------------------------------------------------------------- */
+// 카메라 영상 데이터에서 심전도/맥박 신호 추출 알고리즘
+function processVideoFrame() {
+    if (!isMeasuring) return;
+
+    // 프레임 주기 측정 (FPS 계산)
+    const now = performance.now();
+    fps = Math.round(1000 / (now - lastFrameTime));
+    lastFrameTime = now;
+    fpsCounter.textContent = `FPS: ${fps}`;
+
+    if (currentMode === 'camera') {
+        try {
+            // 보이지 않는 분석용 캔버스에 카메라 프레임 다운샘플링 복사
+            analysisCtx.drawImage(video, 0, 0, analysisCanvas.width, analysisCanvas.height);
+            const imgData = analysisCtx.getImageData(0, 0, analysisCanvas.width, analysisCanvas.height);
+            const data = imgData.data;
+
+            let totalRed = 0, totalGreen = 0, totalBlue = 0;
+            const len = data.length;
+
+            // 전체 픽셀의 RGB 채널 평균 계산
+            for (let i = 0; i < len; i += 4) {
+                totalRed += data[i];
+                totalGreen += data[i+1];
+                totalBlue += data[i+2];
+            }
+
+            const count = len / 4;
+            const avgR = totalRed / count;
+            const avgG = totalGreen / count;
+            const avgB = totalBlue / count;
+
+            // 손가락 감지 판별 공식 (붉은빛 비중이 월등히 커야 함)
+            // 카메라가 덮이고 플래시가 비추면 픽셀의 대부분이 극도의 Red를 나타내게 됨
+            const isFingerPlaced = (avgR > 130 && avgG < 90 && avgB < 90 && avgR > (avgG + avgB) * 1.3);
+
+            if (isFingerPlaced) {
+                fingerWarning.classList.add('hidden');
+                fingerWarning.classList.remove('flex');
+                
+                // PPG 신호는 혈류량이 차오를 때 빛의 감쇠가 증가(Red 수치가 변동)하는 원리 이용
+                // 1단계: 원본 R 채널 변화 추적
+                signalBuffer.push(avgR);
+                if (signalBuffer.length > maxBufferSize) {
+                    signalBuffer.shift();
+                }
+
+                // 2단계: 실시간 미세 트렌드 제거 (DC 드리프트 필터)
+                // 저역 통과 필터를 이용해 기준선 흐름 추출
+                if (lowPassFilterValue === 0) lowPassFilterValue = avgR;
+                lowPassFilterValue = lowPassFilterValue * 0.975 + avgR * 0.025;
+                
+                // 실제 맥박 성분만을 축출한 고역 통과 형태의 데이터
+                const pulseComponent = avgR - lowPassFilterValue;
+                filteredSignal.push(pulseComponent);
+                if (filteredSignal.length > maxBufferSize) {
+                    filteredSignal.shift();
+                }
+
+                // 3단계: 피크 감지 및 실시간 BPM 연산
+                detectPeakAndCalculateBpm(pulseComponent, now);
+
+            } else {
+                // 손가락 미검지 시 경고 노출 및 버퍼 리셋
+                fingerWarning.classList.remove('hidden');
+                fingerWarning.classList.add('flex');
+                
+                // 서서히 버퍼 감소 및 신호 초기화
+                if (filteredSignal.length > 0) {
+                    filteredSignal.shift();
+                }
+            }
+        } catch (err) {
+            console.error("프레임 연산 오류:", err);
+        }
+    } else {
+        // 시뮬레이션(데모) 모드 연산
+        fingerWarning.classList.add('hidden');
+        simPhase += 0.08 + Math.random() * 0.01; // 무작위성을 가미한 정상 심장박동 위상차 구현
+        
+        // 심박 맥파를 가속 및 감쇄를 반영한 정현파 조합으로 합성 (PPG Waveform 모방)
+        const primaryWave = Math.sin(simPhase);
+        const dicroticNotch = 0.35 * Math.sin(simPhase * 2 + 1.2); // 대동맥판 폐쇄 맥파 모방
+        const syntheticPulse = primaryWave + dicroticNotch + (Math.random() - 0.5) * 0.04;
+        
+        filteredSignal.push(syntheticPulse);
+        if (filteredSignal.length > maxBufferSize) {
+            filteredSignal.shift();
+        }
+
+        // 특정 조건 만족시 심장 뛰는 비프음 및 애니메이션 트리거
+        if (Math.sin(simPhase) > 0.9 && Math.sin(simPhase - 0.1) <= 0.9) {
+            triggerHeartbeatVisuals(72 + Math.floor(Math.random() * 5));
+        }
+    }
+
+    // 다음 애니메이션 프레임 예약
+    drawPpgGraph();
+    animationFrameId = requestAnimationFrame(processVideoFrame);
+}
+
+// 실시간 피크 감지(Peak Detection) 및 BPM 산출 함수
+let isPeakRising = false;
+let lastPeakTime = 0;
+function detectPeakAndCalculateBpm(val, currentTime) {
+    const threshold = 0.45; // 노이즈 방지용 최소 문턱값
+    const minBeatingInterval = 380; // 최대 측정 가능 심박 한계치 (대략 160 BPM)
+
+    // 최근 신호의 로컬 변화 흐름 파악을 위한 간이 미분
+    if (filteredSignal.length > 3) {
+        const prev = filteredSignal[filteredSignal.length - 2];
+        const diff = val - prev;
+
+        // 신호가 양의 방향으로 급격히 상승하여 최고점에 도달했는지 관찰
+        if (diff > 0.01 && val > threshold && !isPeakRising) {
+            // 피크 감지 순간
+            isPeakRising = true;
+            
+            // 너무 빠른 노이즈 피크 오작동 방지
+            if (currentTime - lastPeakTime > minBeatingInterval) {
+                const beatInterval = currentTime - lastPeakTime;
+                lastPeakTime = currentTime;
+
+                // 시간차를 BPM으로 변환 (60초 / 박동 시간격)
+                if (beatInterval < 2000) { // 2초 이상 간격은 비정상 맥박으로 간주 배제
+                    const calculatedBpm = Math.round(60000 / beatInterval);
+                    
+                    // 신뢰 범위 (45 ~ 150 BPM) 내 연산 데이터만 유효 처리
+                    if (calculatedBpm >= 45 && calculatedBpm <= 150) {
+                        bpmMovingAverage.push(calculatedBpm);
+                        if (bpmMovingAverage.length > 5) {
+                            bpmMovingAverage.shift();
+                        }
+                        
+                        // 부드러운 이동평균값 적용
+                        const averageBpm = Math.round(
+                            bpmMovingAverage.reduce((a, b) => a + b, 0) / bpmMovingAverage.length
+                        );
+                        
+                        triggerHeartbeatVisuals(averageBpm);
+                    }
+                }
+            }
+        } else if (diff < -0.01) {
+            isPeakRising = false;
+        }
+    }
+}
+
+// 심박이 감지되었을 때 비주얼 및 오디오 효과 재생
+function triggerHeartbeatVisuals(bpm) {
+    if (!isMeasuring) return;
+    
+    // 심박수 수치 실시간 표기 반영
+    bpmValue.textContent = bpm;
+    
+    // 오디오 사운드 재생
+    heartSound.playBeep();
+
+    // 하트 아이콘 맥박 애니메이션 트리거
+    mainHeartIcon.classList.remove('text-slate-600', 'text-rose-500');
+    mainHeartIcon.classList.add('text-rose-500', 'scale-125');
+    pulseBg.classList.remove('bg-rose-500/0');
+    pulseBg.classList.add('bg-rose-500/25');
+
+    setTimeout(() => {
+        mainHeartIcon.classList.remove('scale-125');
+        pulseBg.classList.remove('bg-rose-500/25');
+        pulseBg.classList.add('bg-rose-500/0');
+    }, 150);
+}
+
+/* -------------------------------------------------------------
+   STREAMING_CHUNK: 디바이스 카메라 및 토치 제어 기능...
+------------------------------------------------------------- */
+// 안드로이드 카메라 스트림 가져오기 및 플래시(Torch) 켜기
+async function startCameraAndTorch() {
+    try {
+        const constraints = {
+            video: {
+                facingMode: { ideal: 'environment' }, // 후면 카메라 선호
+                width: { ideal: 240 },
+                height: { ideal: 240 },
+                frameRate: { ideal: 30 }
+            }
+        };
+
+        localStream = await navigator.mediaDevices.getUserMedia(constraints);
+        video.srcObject = localStream;
+        
+        // 메타데이터가 완벽히 오토플레이 될 때까지 대기
+        await new Promise((resolve) => {
+            video.onloadedmetadata = () => {
+                resolve(true);
+            };
+        });
+
+        // 안드로이드 디바이스 플래시(Torch) 활성화 시도
+        const track = localStream.getVideoTracks()[0];
+        const capabilities = track.getCapabilities();
+        
+        // 브라우저에서 플래시 제어를 제공하는 경우 활성화
+        if (capabilities.torch) {
+            await track.applyConstraints({
+                advanced: [{ torch: true }]
+            });
+            updateStatusText(true, '카메라 준비 및 플래시 활성');
+        } else {
+            updateStatusText(true, '카메라 연결됨 (가급적 밝은 곳 권장)');
+        }
+        return true;
+    } catch (err) {
+        console.error("카메라 하드웨어 접근 차단:", err);
+        updateStatusText(false, '카메라 권한 거부됨');
+        showPopupMessage('카메라에 액세스할 수 없습니다. 시뮬레이션 모드를 사용해 보세요!');
+        return false;
+    }
+}
+
+// 카메라 스트림 및 플래시 리소스 즉시 반환
+function stopCameraAndTorch() {
+    if (localStream) {
+        localStream.getTracks().forEach(track => {
+            track.stop();
+        });
+        localStream = null;
+    }
+    video.srcObject = null;
+    updateStatusText(false, '카메라 대기 중');
+}
+
+// 상단 헤더의 장치 연결 지표 변경 유틸리티
+function updateStatusText(isActive, text) {
+    statusText.textContent = text;
+    if (isActive) {
+        statusDot.className = "w-2 h-2 rounded-full bg-emerald-500 animate-pulse";
+        connectionStatus.className = "text-xs bg-slate-900/80 text-emerald-400 px-2.5 py-1 rounded-full flex items-center gap-1.5 border border-emerald-500/30";
+    } else {
+        statusDot.className = "w-2 h-2 rounded-full bg-slate-600";
+        connectionStatus.className = "text-xs bg-slate-800 text-slate-300 px-2.5 py-1 rounded-full flex items-center gap-1.5 border border-slate-700";
+    }
+}
+
+/* -------------------------------------------------------------
+   STREAMING_CHUNK: 측정 컨트롤 및 스케줄링 관리...
+------------------------------------------------------------- */
+// 심박 측정 시작 프로세스
+async function startMeasurement() {
+    if (isMeasuring) return;
+    
+    isMeasuring = true;
+    measurementProgress = 0;
+    signalBuffer = [];
+    filteredSignal = [];
+    bpmMovingAverage = [];
+    bpmValue.textContent = '--';
+    measureInstruction.innerHTML = '손가락 밀착 후<br>움직이지 마세요';
+    
+    mainHeartIcon.classList.remove('text-slate-600', 'text-rose-500');
+    mainHeartIcon.classList.add('text-slate-600');
+    
+    let isInitiated = true;
+    if (currentMode === 'camera') {
+        updateStatusText(true, '장비 연결 시도 중...');
+        isInitiated = await startCameraAndTorch();
+    } else {
+        updateStatusText(true, '가상 시뮬레이션 측정 중');
+    }
+
+    if (!isInitiated) {
+        isMeasuring = false;
+        measureInstruction.innerHTML = '터치하여 측정 시작';
+        return;
+    }
+
+    // 오디오 컨텍스트 사전 구동
+    heartSound.init();
+
+    measurementStartTime = performance.now();
+    
+    // 타임아웃 및 정밀 프로그레스링 애니메이션 개시
+    measurementTimer = setInterval(() => {
+        const elapsed = performance.now() - measurementStartTime;
+        measurementProgress = Math.min((elapsed / measurementDuration) * 100, 100);
+        
+        // 원형 대시 옵셋 계산 (반지름 r=92, 전체 둘레 길이는 578)
+        const offset = 578 - (578 * measurementProgress) / 100;
+        progressRing.style.strokeDashoffset = offset;
+
+        if (measurementProgress >= 100) {
+            completeMeasurement();
+        }
+    }, 100);
+
+    // 알고리즘 프레임 주기 작동 개시
+    lastFrameTime = performance.now();
+    animationFrameId = requestAnimationFrame(processVideoFrame);
+}
+
+// 심박 측정 정상 종료 처리
+function completeMeasurement() {
+    clearInterval(measurementTimer);
+    cancelAnimationFrame(animationFrameId);
+    stopCameraAndTorch();
+    isMeasuring = false;
+
+    // 최종 산정 심박 추출
+    if (currentMode === 'camera') {
+        if (bpmMovingAverage.length > 0) {
+            // 평균값 추출
+            finalBpmResult = Math.round(
+                bpmMovingAverage.reduce((a, b) => a + b, 0) / bpmMovingAverage.length
+            );
+        } else {
+            // 충분한 심박 신호를 검지하지 못한 경우 난수 보정 처리 방지 및 안내
+            finalBpmResult = 0;
+        }
+    } else {
+        // 시뮬레이션의 경우 정상 성인 맥박 구간으로 결과 획득
+        finalBpmResult = 70 + Math.floor(Math.random() * 12);
+    }
+
+    // UI 변환
+    progressRing.style.strokeDashoffset = "578"; // 원복
+    measureInstruction.innerHTML = '터치하여 측정 시작';
+    
+    if (finalBpmResult > 0) {
+        bpmValue.textContent = finalBpmResult;
+        mainHeartIcon.className = "fa-solid fa-heart text-rose-500 text-4xl";
+        
+        // 로컬스토리지에 신규 기록 보관
+        saveToHistory(finalBpmResult);
+        showPopupMessage(`측정 완료: ${finalBpmResult} BPM`);
+    } else {
+        bpmValue.textContent = '--';
+        mainHeartIcon.className = "fa-solid fa-heart text-slate-600 text-4xl";
+        showPopupMessage('충분한 신호가 수집되지 않았습니다. 밝은 곳에서 재시도해 주세요!');
+    }
+}
+
+// 비정상 비상 리셋 처리
+function abortMeasurement() {
+    clearInterval(measurementTimer);
+    if (animationFrameId) cancelAnimationFrame(animationFrameId);
+    stopCameraAndTorch();
+    isMeasuring = false;
+    
+    measurementProgress = 0;
+    progressRing.style.strokeDashoffset = "578";
+    bpmValue.textContent = '--';
+    measureInstruction.innerHTML = '터치하여 측정 시작';
+    mainHeartIcon.className = "fa-solid fa-heart text-slate-600 text-4xl";
+    fingerWarning.classList.add('hidden');
+    
+    if (currentMode === 'camera') {
+        updateStatusText(false, '카메라 대기 중');
+    } else {
+        updateStatusText(false, '시뮬레이션 대기 중');
+    }
+}
+
+/* -------------------------------------------------------------
+   STREAMING_CHUNK: 측정 이력 데이터 관리 (로컬스토리지)...
+------------------------------------------------------------- */
+// 데이터베이스에 상응하는 브라우저 내장 스토리지 저장 및 렌더링
+function saveToHistory(bpm) {
+    const history = JSON.parse(localStorage.getItem('pulse_history') || '[]');
+    const newRecord = {
+        id: Date.now(),
+        bpm: bpm,
+        date: new Date().toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+        tag: determineBpmTag(bpm)
+    };
+    
+    history.unshift(newRecord); // 가장 앞에 신규 배치
+    localStorage.setItem('pulse_history', JSON.stringify(history));
+    renderHistory();
+}
+
+function determineBpmTag(bpm) {
+    if (bpm < 60) return { label: '서맥 (낮음)', class: 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20' };
+    if (bpm <= 100) return { label: '정상 (안정)', class: 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' };
+    return { label: '빈맥 (빠름)', class: 'bg-rose-500/10 text-rose-400 border border-rose-500/20' };
+}
+
+function renderHistory() {
+    const history = JSON.parse(localStorage.getItem('pulse_history') || '[]');
+    historyList.innerHTML = '';
+    
+    if (history.length === 0) {
+        historyEmpty.classList.remove('hidden');
+        historyEmpty.classList.add('flex');
+        return;
+    }
+    
+    historyEmpty.classList.add('hidden');
+    historyEmpty.classList.remove('flex');
+
+    // 최신 측정기록 상위 10개만 리스트업 출력
+    history.slice(0, 10).forEach(item => {
+        const div = document.createElement('div');
+        div.className = "bg-slate-950/60 hover:bg-slate-950 border border-slate-800/80 rounded-xl p-3 flex items-center justify-between transition-colors";
+        div.innerHTML = `
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-lg bg-rose-500/5 flex items-center justify-center border border-rose-500/10">
+                    <span class="text-rose-500 font-extrabold text-lg">${item.bpm}</span>
+                </div>
+                <div>
+                    <span class="text-[9px] text-slate-500 block">${item.date}</span>
+                    <span class="text-xs text-slate-300 font-medium">측정 결과: ${item.bpm} BPM</span>
+                </div>
+            </div>
+            <span class="text-[10px] px-2 py-0.5 rounded-full font-semibold ${item.tag.class}">
+                ${item.tag.label}
+            </span>
+        `;
+        historyList.appendChild(div);
+    });
+}
+
+/* -------------------------------------------------------------
+   STREAMING_CHUNK: 공통 사용자 경험 편의 보강 도구...
+------------------------------------------------------------- */
+// 커스텀 화면 노티 박스
+function showPopupMessage(msg) {
+    const alertBox = document.createElement('div');
+    alertBox.className = "fixed bottom-20 left-1/2 -translate-x-1/2 bg-slate-900 border border-slate-700 text-slate-200 text-xs py-2.5 px-5 rounded-full shadow-2xl z-[100] transition-opacity duration-300 pointer-events-none text-center font-medium min-w-[200px]";
+    alertBox.innerHTML = msg;
+    document.body.appendChild(alertBox);
+
+    setTimeout(() => { alertBox.style.opacity = '0'; }, 2500);
+    setTimeout(() => { alertBox.remove(); }, 2800);
+}
+
+/* -------------------------------------------------------------
+   STREAMING_CHUNK: 이벤트 리스너 바인딩 및 부트스트래핑...
+------------------------------------------------------------- */
+// 이벤트 리스너 등록
+btnPulseTrigger.addEventListener('click', () => {
+    if (isMeasuring) {
+        abortMeasurement();
+    } else {
+        startMeasurement();
+    }
+});
+
+btnCameraMode.addEventListener('click', () => {
+    if (isMeasuring) abortMeasurement();
+    currentMode = 'camera';
+    btnCameraMode.className = "flex-1 py-2 text-xs font-medium rounded-lg bg-slate-800 text-white transition-all duration-200";
+    btnDemoMode.className = "flex-1 py-2 text-xs font-medium rounded-lg text-slate-400 hover:text-white transition-all duration-200";
+    updateStatusText(false, '카메라 대기 중');
+});
+
+btnDemoMode.addEventListener('click', () => {
+    if (isMeasuring) abortMeasurement();
+    currentMode = 'demo';
+    btnDemoMode.className = "flex-1 py-2 text-xs font-medium rounded-lg bg-slate-800 text-white transition-all duration-200";
+    btnCameraMode.className = "flex-1 py-2 text-xs font-medium rounded-lg text-slate-400 hover:text-white transition-all duration-200";
+    updateStatusText(true, '가상 시뮬레이터 로드됨');
+});
+
+btnSoundToggle.addEventListener('click', () => {
+    heartSound.isEnabled = !heartSound.isEnabled;
+    if (heartSound.isEnabled) {
+        heartSound.init(); // 사용자 인터랙션 후 즉시 웹 오디오 생성 허용
+        soundIcon.className = "fa-solid fa-volume-high text-emerald-400";
+        soundStatus.textContent = "켜짐";
+        soundStatus.className = "text-emerald-400";
+        heartSound.playBeep(); // 활성화 안내 피드백
+    } else {
+        soundIcon.className = "fa-solid fa-volume-xmark text-slate-500";
+        soundStatus.textContent = "꺼짐";
+        soundStatus.className = "text-slate-500";
+    }
+});
+
+btnClearHistory.addEventListener('click', () => {
+    if (confirm('모든 심박 측정 기록을 초기화하시겠습니까?')) {
+        localStorage.removeItem('pulse_history');
+        renderHistory();
+        showPopupMessage('모든 데이터가 삭제되었습니다.');
+    }
+});
+
+// 초기 구동 실행부
+window.onload = function() {
+    renderHistory();
+    drawPpgGraph();
+}
+</script>
+</body>
+</html>
