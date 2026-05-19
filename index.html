@@ -163,9 +163,14 @@
             <h3 class="text-sm font-semibold text-slate-300 flex items-center gap-2">
                 <i class="fa-solid fa-clock-rotate-left text-teal-400"></i> 최근 심박 측정 이력
             </h3>
-            <button id="btn-clear-history" class="text-[10px] text-slate-500 hover:text-rose-400 transition-colors font-bold">
-                이력 초기화
-            </button>
+            <div class="flex items-center gap-2">
+                <button id="btn-download-csv" class="text-[10px] text-teal-400 hover:text-teal-300 transition-colors font-bold flex items-center gap-1 bg-slate-950/40 px-2 py-1 rounded-md border border-teal-500/25">
+                    <i class="fa-solid fa-file-csv"></i> CSV 다운로드
+                </button>
+                <button id="btn-clear-history" class="text-[10px] text-slate-500 hover:text-rose-400 transition-colors font-bold bg-slate-950/40 px-2 py-1 rounded-md border border-slate-800">
+                    이력 초기화
+                </button>
+            </div>
         </div>
         
         <!-- 이력 리스트 컨테이너 -->
@@ -257,6 +262,7 @@ const btnSoundToggle = document.getElementById('btn-sound-toggle');
 const soundIcon = document.getElementById('sound-icon');
 const soundStatus = document.getElementById('sound-status');
 const btnClearHistory = document.getElementById('btn-clear-history');
+const btnDownloadCsv = document.getElementById('btn-download-csv');
 const historyList = document.getElementById('history-list');
 const historyEmpty = document.getElementById('history-empty');
 
@@ -855,6 +861,46 @@ btnClearHistory.addEventListener('click', () => {
         renderHistory();
         showPopupMessage('모든 데이터가 삭제되었습니다.');
     }
+});
+
+btnDownloadCsv.addEventListener('click', () => {
+    const history = JSON.parse(localStorage.getItem('pulse_history') || '[]');
+    if (history.length === 0) {
+        showPopupMessage('다운로드할 측정 기록이 없습니다.');
+        return;
+    }
+    
+    // MS 엑셀 한글 깨짐 방지용 BOM 코드 주입
+    let csvContent = "\uFEFF";
+    
+    // 헤더 정의
+    csvContent += "ID(Timestamp),측정 시간,심박수(BPM),상태 설명\n";
+    
+    // 데이터 행 작성
+    history.forEach(item => {
+        const statusLabel = item.tag ? item.tag.label : '미정';
+        // 콤마(,)가 포함될 수 있는 필드 이스케이프 처리
+        const escapedDate = `"${item.date.replace(/"/g, '""')}"`;
+        const escapedStatus = `"${statusLabel.replace(/"/g, '""')}"`;
+        
+        csvContent += `${item.id},${escapedDate},${item.bpm},${escapedStatus}\n`;
+    });
+    
+    // Blob 객체 생성 및 파일 다운로드 트리거
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    
+    const today = new Date().toISOString().split('T')[0];
+    link.setAttribute("href", url);
+    link.setAttribute("download", `heart_rate_history_${today}.csv`);
+    link.style.visibility = 'hidden';
+    
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    showPopupMessage('CSV 파일이 저장되었습니다.');
 });
 
 // 초기 구동 실행부
