@@ -46,7 +46,7 @@
             </div>
             <div>
                 <h1 class="text-md font-bold text-white tracking-tight">Smart Pulse</h1>
-                <p class="text-[10px] text-slate-400">Android 모바일 최적화</p>
+                <p class="text-[10px] text-slate-400">데이터 분석 최적화 버전</p>
             </div>
         </div>
         <!-- 상태 표시 배지 -->
@@ -58,7 +58,7 @@
 </header>
 
 <!-- 메인 앱 컨텐츠 영역 -->
-<main class="flex-1 max-w-md w-full mx-auto px-4 py-6 flex flex-col justify-start gap-6">
+<main class="flex-1 max-w-md w-full mx-auto px-4 py-6 flex flex-col justify-start gap-4">
 
     <!-- 스마트폰 측정 안내 카드 -->
     <section class="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 shadow-xl">
@@ -72,11 +72,11 @@
             </div>
             <div class="bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/80 flex flex-col items-center gap-1">
                 <div class="w-7 h-7 rounded-full bg-rose-500/10 text-rose-400 flex items-center justify-center font-bold">2</div>
-                <span>플래시가 켜지면 붉은빛 감지 시작</span>
+                <span>손가락 움직임과 말하는 것을 금지</span>
             </div>
             <div class="bg-slate-950/40 p-2.5 rounded-xl border border-slate-800/80 flex flex-col items-center gap-1">
                 <div class="w-7 h-7 rounded-full bg-rose-500/10 text-rose-400 flex items-center justify-center font-bold">3</div>
-                <span>측정이 끝날 때까지 15초간 대기</span>
+                <span>호흡을 규칙적이고 편안하게 유지</span>
             </div>
         </div>
     </section>
@@ -89,6 +89,24 @@
         <button id="btn-demo-mode" class="flex-1 py-2 text-xs font-medium rounded-lg text-slate-400 hover:text-white transition-all duration-200">
             <i class="fa-solid fa-wand-magic-sparkles mr-1"></i> 시뮬레이션 모드
         </button>
+    </div>
+
+    <!-- 신규: 분석 목적별 측정 시간 설정 드롭다운 -->
+    <div class="bg-slate-900/60 border border-slate-800 p-3.5 rounded-2xl shadow-xl flex flex-col gap-2">
+        <div class="flex justify-between items-center">
+            <span class="text-xs text-slate-300 font-semibold flex items-center gap-1.5">
+                <i class="fa-solid fa-stopwatch text-teal-400"></i> 측정 시간 설정 (Data Duration)
+            </span>
+            <select id="select-duration" class="bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-medium outline-none focus:border-rose-500 transition-colors">
+                <option value="15000">15초 (빠른 확인용)</option>
+                <option value="30000">30초 (일반 학술 보고용)</option>
+                <option value="60000" selected>1분 (HRV 정밀 분석 표준)</option>
+                <option value="120000">2분 (고정밀 자율신경계 분석)</option>
+            </select>
+        </div>
+        <p class="text-[10px] text-slate-500 leading-normal">
+            * 호흡 주기 노이즈 필터링 및 푸리에 변환, HRV 타임시리즈 분석을 목적으로 할 경우 최소 <strong class="text-teal-500">1분(60초) 이상</strong> 측정을 권장합니다.
+        </p>
     </div>
 
     <!-- 핵심 측정 시각화 패널 -->
@@ -264,6 +282,7 @@ const connectionStatus = document.getElementById('connection-status');
 const statusDot = document.getElementById('status-dot');
 const statusText = document.getElementById('status-text');
 const fpsCounter = document.getElementById('fps-counter');
+const selectDuration = document.getElementById('select-duration');
 
 // 전역 설정 및 상태 변수
 let isMeasuring = false;
@@ -280,21 +299,30 @@ let filteredSignal = []; // 필터링된 맥파 신호
 let lowPassFilterValue = 0;
 let peakTimes = []; // 실시간 감지된 피크 시간들
 let bpmMovingAverage = []; // 심박수 스무딩 버퍼
-let currentSessionBeats = []; // 15초 측정 동안 기록되는 개별 맥박 시계열 로그
+let currentSessionBeats = []; // 측정 동안 기록되는 개별 맥박 시계열 로그
 
-// 피크 감지 상태용 전역 변수 (중복 선언 완전 방지)
+// 피크 감지 상태용 전역 변수
 let isPeakRising = false;
 let lastPeakTime = 0;
 
 // 시뮬레이션 모드 변수
 let simPhase = 0;
 
-// UI 전반 제어 변수
+// UI 및 시간 제어 변수 (동적 세팅 지원)
 let measurementProgress = 0; // 0 to 100
 let measurementTimer = null;
-const measurementDuration = 15000; // 15초 동안 정밀 측정
+let measurementDuration = parseInt(selectDuration.value); // 초기 드롭다운 설정 기준 (기본 1분)
 let measurementStartTime = 0;
 let finalBpmResult = 0;
+
+// 동적으로 측정 타임 세팅 동기화
+selectDuration.addEventListener('change', (e) => {
+    if (isMeasuring) {
+        abortMeasurement();
+        showPopupMessage('측정 시간 설정을 변경하여 측정이 중단되었습니다.');
+    }
+    measurementDuration = parseInt(e.target.value);
+});
 
 // 화면 크기에 맞게 맥파 그래프 캔버스 리사이징
 function resizePpgCanvas() {
@@ -489,7 +517,7 @@ function detectPeakAndCalculateBpm(val, currentTime) {
                             bpmMovingAverage.reduce((a, b) => a + b, 0) / bpmMovingAverage.length
                         );
                         
-                        // 시각 피드백 호출 시 순간 BPM(calculatedBpm)도 함께 보냅니다.
+                        // 시각 피드백 및 상세 수집을 위해 원형 BPM과 간격 매핑 호출
                         triggerHeartbeatVisuals(averageBpm, calculatedBpm);
                     }
                 }
@@ -509,7 +537,7 @@ function triggerHeartbeatVisuals(bpm, rawBpm = null) {
     
     heartSound.playBeep();
 
-    // 15초 세션 중 이 맥박이 발생한 정확한 시점 기록 (HRV 분석용)
+    // 측정 세션 중 이 맥박이 발생한 정확한 시점 기록 (HRV 분석용)
     const elapsedSec = ((performance.now() - measurementStartTime) / 1000).toFixed(2);
     const instantBpm = rawBpm || bpm;
     currentSessionBeats.push({
@@ -608,7 +636,7 @@ async function startMeasurement() {
     signalBuffer = [];
     filteredSignal = [];
     bpmMovingAverage = [];
-    currentSessionBeats = []; // 신규 측정을 시작할 때 변동 어레이 초기화
+    currentSessionBeats = []; // 신규 측정마다 이전 수집 로그 리셋
     bpmValue.textContent = '--';
     measureInstruction.innerHTML = '손가락 밀착 후<br>움직이지 마세요';
     
@@ -666,12 +694,13 @@ function completeMeasurement() {
         }
     } else {
         finalBpmResult = 70 + Math.floor(Math.random() * 12);
-        // 시뮬레이션 모드에서도 임의의 15초 맥박 타임라인 생성
+        // 시뮬레이션 모드에서도 임의의 타임라인을 선택된 전체 시간 동안 생성
         let fakeTime = 0;
         let beatCount = 1;
-        while(fakeTime < 15.0) {
+        const durationSec = measurementDuration / 1000;
+        while(fakeTime < durationSec) {
             fakeTime += (60 / (finalBpmResult + (Math.random() * 10 - 5)));
-            if (fakeTime < 15.0) {
+            if (fakeTime < durationSec) {
                 currentSessionBeats.push({
                     beatNum: beatCount++,
                     timeSec: fakeTime.toFixed(2),
@@ -688,13 +717,13 @@ function completeMeasurement() {
         bpmValue.textContent = finalBpmResult;
         mainHeartIcon.className = "fa-solid fa-heart text-rose-500 text-4xl";
         
-        // 상세 수집된 변동값 로그(currentSessionBeats)를 함께 인자로 전달
+        // 상세 데이터가 세팅된 변동 로그(currentSessionBeats)를 포함하여 로컬 DB에 영구화
         saveToHistory(finalBpmResult, currentSessionBeats);
-        showPopupMessage(`측정 완료: ${finalBpmResult} BPM`);
+        showPopupMessage(`측정 완료 (${measurementDuration/1000}초): ${finalBpmResult} BPM`);
     } else {
         bpmValue.textContent = '--';
         mainHeartIcon.className = "fa-solid fa-heart text-slate-600 text-4xl";
-        showPopupMessage('충분한 신호가 수집되지 않았습니다. 밝은 곳에서 재시도해 주세요!');
+        showPopupMessage('충분한 신호가 수집되지 않았습니다. 다시 측정해 주세요!');
     }
 }
 
@@ -719,15 +748,17 @@ function abortMeasurement() {
     }
 }
 
-// 데이터베이스에 상응하는 브라우저 내장 스토리지 저장 및 렌더링
+// 내장 로컬 브라우저 디비 저장 및 렌더링
 function saveToHistory(bpm, beats = []) {
     const history = JSON.parse(localStorage.getItem('pulse_history') || '[]');
+    const totalSecs = (measurementDuration / 1000).toFixed(0);
     const newRecord = {
         id: Date.now(),
         bpm: bpm,
+        duration: totalSecs,
         date: new Date().toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
         tag: determineBpmTag(bpm),
-        beats: beats // 상세 15초 시계열 변동 데이터 보관 추가
+        beats: beats // 해당 세션 전체의 시계열 로그 보관
     };
     
     history.unshift(newRecord); 
@@ -754,18 +785,23 @@ function renderHistory() {
     historyEmpty.classList.add('hidden');
     historyEmpty.classList.remove('flex');
 
-    // 최신 측정기록 상위 10개만 리스트업 출력
+    // 최신 측정기록 출력
     history.slice(0, 10).forEach(item => {
         const div = document.createElement('div');
         div.className = "bg-slate-950/60 hover:bg-slate-950 border border-slate-800/80 rounded-xl p-3 flex items-center justify-between transition-colors";
+        
+        // 과거 기록 중 'duration' 데이터가 없으면 하위 호환을 위해 15초 처리
+        const durText = item.duration ? `${item.duration}초` : '15초';
+        const beatLogCount = item.beats ? item.beats.length : 0;
+        
         div.innerHTML = `
             <div class="flex items-center gap-3">
                 <div class="w-10 h-10 rounded-lg bg-rose-500/5 flex items-center justify-center border border-rose-500/10">
                     <span class="text-rose-500 font-extrabold text-lg">${item.bpm}</span>
                 </div>
                 <div>
-                    <span class="text-[9px] text-slate-500 block">${item.date}</span>
-                    <span class="text-xs text-slate-300 font-medium">측정 결과: ${item.bpm} BPM</span>
+                    <span class="text-[9px] text-slate-500 block">${item.date} (${durText} 측정)</span>
+                    <span class="text-xs text-slate-300 font-medium">평균: ${item.bpm} BPM / 총 ${beatLogCount}회 맥박 감지</span>
                 </div>
             </div>
             <span class="text-[10px] px-2 py-0.5 rounded-full font-semibold ${item.tag.class}">
@@ -776,7 +812,7 @@ function renderHistory() {
     });
 }
 
-// 커스텀 화면 노티 박스
+// 커스텀 알림 레이아웃
 function showPopupMessage(msg) {
     const alertBox = document.createElement('div');
     alertBox.className = "fixed bottom-20 left-1/2 -translate-x-1/2 bg-slate-900 border border-slate-700 text-slate-200 text-xs py-2.5 px-5 rounded-full shadow-2xl z-[100] transition-opacity duration-300 pointer-events-none text-center font-medium min-w-[200px]";
@@ -845,22 +881,23 @@ btnDownloadCsv.addEventListener('click', () => {
     // MS 엑셀 한글 깨짐 방지용 BOM 코드 주입
     let csvContent = "\uFEFF";
     
-    // 상세 시계열 추적이 가능한 CSV 헤더 정의
-    csvContent += "측정 일시,세션 평균 심박수(BPM),맥박 순번,경과 시간(초),순간 심박수(BPM)\n";
+    // 상세 시계열 데이터 추적이 가능한 CSV 헤더 정의
+    csvContent += "측정 일시,측정 세션 총시간(초),세션 평균 심박수(BPM),맥박 순번,경과 시간(초),순간 심박수(BPM)\n";
     
     // 데이터 행 작성
     history.forEach(item => {
         const dateStr = item.date;
         const avgBpm = item.bpm;
+        const durationText = item.duration || "15";
         
-        // 해당 세션에 15초 시계열 기록이 있는 경우
+        // 해당 세션에 시계열 기록이 있는 경우
         if (item.beats && item.beats.length > 0) {
             item.beats.forEach(beat => {
-                csvContent += `"${dateStr}",${avgBpm},${beat.beatNum},${beat.timeSec},${beat.bpm}\n`;
+                csvContent += `"${dateStr}",${durationText},${avgBpm},${beat.beatNum},${beat.timeSec},${beat.bpm}\n`;
             });
         } else {
-            // 상세 비트 기록이 없는 이전 구형 로그의 경우 하위 호환성 유지 출력
-            csvContent += `"${dateStr}",${avgBpm},1,15.00,${avgBpm}\n`;
+            // 상세 비트 기록이 없는 구형 로그 호환용 출력
+            csvContent += `"${dateStr}",${durationText},${avgBpm},1,${durationText}.00,${avgBpm}\n`;
         }
     });
     
