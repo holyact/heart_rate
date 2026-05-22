@@ -196,9 +196,6 @@
 </footer>
 
 <script>
-/* -------------------------------------------------------------
-   스마트폰 사운드 피드백을 위한 Web Audio API 모듈
-------------------------------------------------------------- */
 class HeartSound {
     constructor() {
         this.ctx = null;
@@ -236,9 +233,6 @@ class HeartSound {
 
 const heartSound = new HeartSound();
 
-/* -------------------------------------------------------------
-   메인 측정 로직 및 알고리즘 모듈
-------------------------------------------------------------- */
 // DOM 요소 모음
 const video = document.getElementById('webcam-video');
 const analysisCanvas = document.getElementById('analysis-canvas');
@@ -286,6 +280,11 @@ let filteredSignal = []; // 필터링된 맥파 신호
 let lowPassFilterValue = 0;
 let peakTimes = []; // 실시간 감지된 피크 시간들
 let bpmMovingAverage = []; // 심박수 스무딩 버퍼
+let currentSessionBeats = []; // 15초 측정 동안 기록되는 개별 맥박 시계열 로그
+
+// 피크 감지 상태용 전역 변수 (중복 선언 완전 방지)
+let isPeakRising = false;
+let lastPeakTime = 0;
 
 // 시뮬레이션 모드 변수
 let simPhase = 0;
@@ -297,9 +296,6 @@ const measurementDuration = 15000; // 15초 동안 정밀 측정
 let measurementStartTime = 0;
 let finalBpmResult = 0;
 
-/* -------------------------------------------------------------
-   실시간 PPG 파형 캔버스 그리기 함수
-------------------------------------------------------------- */
 // 화면 크기에 맞게 맥파 그래프 캔버스 리사이징
 function resizePpgCanvas() {
     const dpr = window.devicePixelRatio || 1;
@@ -375,9 +371,6 @@ function drawPpgGraph() {
     ppgCtx.stroke();
 }
 
-/* -------------------------------------------------------------
-   STREAMING_CHUNK: PPG 알고리즘 및 영상 프레임 분석 처리...
-------------------------------------------------------------- */
 // 카메라 영상 데이터에서 심전도/맥박 신호 추출 알고리즘
 function processVideoFrame() {
     if (!isMeasuring) return;
@@ -411,41 +404,32 @@ function processVideoFrame() {
             const avgB = totalBlue / count;
 
             // 손가락 감지 판별 공식 (붉은빛 비중이 월등히 커야 함)
-            // 카메라가 덮이고 플래시가 비추면 픽셀의 대부분이 극도의 Red를 나타내게 됨
             const isFingerPlaced = (avgR > 130 && avgG < 90 && avgB < 90 && avgR > (avgG + avgB) * 1.3);
 
             if (isFingerPlaced) {
                 fingerWarning.classList.add('hidden');
                 fingerWarning.classList.remove('flex');
                 
-                // PPG 신호는 혈류량이 차오를 때 빛의 감쇠가 증가(Red 수치가 변동)하는 원리 이용
-                // 1단계: 원본 R 채널 변화 추적
                 signalBuffer.push(avgR);
                 if (signalBuffer.length > maxBufferSize) {
                     signalBuffer.shift();
                 }
 
-                // 2단계: 실시간 미세 트렌드 제거 (DC 드리프트 필터)
-                // 저역 통과 필터를 이용해 기준선 흐름 추출
                 if (lowPassFilterValue === 0) lowPassFilterValue = avgR;
                 lowPassFilterValue = lowPassFilterValue * 0.975 + avgR * 0.025;
                 
-                // 실제 맥박 성분만을 축출한 고역 통과 형태의 데이터
                 const pulseComponent = avgR - lowPassFilterValue;
                 filteredSignal.push(pulseComponent);
                 if (filteredSignal.length > maxBufferSize) {
                     filteredSignal.shift();
                 }
 
-                // 3단계: 피크 감지 및 실시간 BPM 연산
                 detectPeakAndCalculateBpm(pulseComponent, now);
 
             } else {
-                // 손가락 미검지 시 경고 노출 및 버퍼 리셋
                 fingerWarning.classList.remove('hidden');
                 fingerWarning.classList.add('flex');
                 
-                // 서서히 버퍼 감소 및 신호 초기화
                 if (filteredSignal.length > 0) {
                     filteredSignal.shift();
                 }
@@ -456,11 +440,10 @@ function processVideoFrame() {
     } else {
         // 시뮬레이션(데모) 모드 연산
         fingerWarning.classList.add('hidden');
-        simPhase += 0.08 + Math.random() * 0.01; // 무작위성을 가미한 정상 심장박동 위상차 구현
+        simPhase += 0.08 + Math.random() * 0.01; 
         
-        // 심박 맥파를 가속 및 감쇄를 반영한 정현파 조합으로 합성 (PPG Waveform 모방)
         const primaryWave = Math.sin(simPhase);
-        const dicroticNotch = 0.35 * Math.sin(simPhase * 2 + 1.2); // 대동맥판 폐쇄 맥파 모방
+        const dicroticNotch = 0.35 * Math.sin(simPhase * 2 + 1.2); 
         const syntheticPulse = primaryWave + dicroticNotch + (Math.random() - 0.5) * 0.04;
         
         filteredSignal.push(syntheticPulse);
@@ -468,56 +451,46 @@ function processVideoFrame() {
             filteredSignal.shift();
         }
 
-        // 특정 조건 만족시 심장 뛰는 비프음 및 애니메이션 트리거
         if (Math.sin(simPhase) > 0.9 && Math.sin(simPhase - 0.1) <= 0.9) {
             triggerHeartbeatVisuals(72 + Math.floor(Math.random() * 5));
         }
     }
 
-    // 다음 애니메이션 프레임 예약
     drawPpgGraph();
     animationFrameId = requestAnimationFrame(processVideoFrame);
 }
 
-// 실시간 피크 감지(Peak Detection) 및 BPM 산출 함수
-let isPeakRising = false;
-let lastPeakTime = 0;
+// 실시간 피크 감지 및 BPM 산출 함수
 function detectPeakAndCalculateBpm(val, currentTime) {
-    const threshold = 0.45; // 노이즈 방지용 최소 문턱값
-    const minBeatingInterval = 380; // 최대 측정 가능 심박 한계치 (대략 160 BPM)
+    const threshold = 0.45; 
+    const minBeatingInterval = 380; 
 
-    // 최근 신호의 로컬 변화 흐름 파악을 위한 간이 미분
     if (filteredSignal.length > 3) {
         const prev = filteredSignal[filteredSignal.length - 2];
         const diff = val - prev;
 
-        // 신호가 양의 방향으로 급격히 상승하여 최고점에 도달했는지 관찰
         if (diff > 0.01 && val > threshold && !isPeakRising) {
-            // 피크 감지 순간
             isPeakRising = true;
             
-            // 너무 빠른 노이즈 피크 오작동 방지
             if (currentTime - lastPeakTime > minBeatingInterval) {
                 const beatInterval = currentTime - lastPeakTime;
                 lastPeakTime = currentTime;
 
-                // 시간차를 BPM으로 변환 (60초 / 박동 시간격)
-                if (beatInterval < 2000) { // 2초 이상 간격은 비정상 맥박으로 간주 배제
+                if (beatInterval < 2000) { 
                     const calculatedBpm = Math.round(60000 / beatInterval);
                     
-                    // 신뢰 범위 (45 ~ 150 BPM) 내 연산 데이터만 유효 처리
                     if (calculatedBpm >= 45 && calculatedBpm <= 150) {
                         bpmMovingAverage.push(calculatedBpm);
                         if (bpmMovingAverage.length > 5) {
                             bpmMovingAverage.shift();
                         }
                         
-                        // 부드러운 이동평균값 적용
                         const averageBpm = Math.round(
                             bpmMovingAverage.reduce((a, b) => a + b, 0) / bpmMovingAverage.length
                         );
                         
-                        triggerHeartbeatVisuals(averageBpm);
+                        // 시각 피드백 호출 시 순간 BPM(calculatedBpm)도 함께 보냅니다.
+                        triggerHeartbeatVisuals(averageBpm, calculatedBpm);
                     }
                 }
             }
@@ -527,15 +500,23 @@ function detectPeakAndCalculateBpm(val, currentTime) {
     }
 }
 
-// 심박이 감지되었을 때 비주얼 및 오디오 효과 재생
-function triggerHeartbeatVisuals(bpm) {
+// 심박이 감지되었을 때 비주얼/오디오 효과 재생 및 시계열 로깅
+function triggerHeartbeatVisuals(bpm, rawBpm = null) {
     if (!isMeasuring) return;
     
-    // 심박수 수치 실시간 표기 반영
+    // UI에는 스무딩된 평균값(BPM) 표시
     bpmValue.textContent = bpm;
     
-    // 오디오 사운드 재생
     heartSound.playBeep();
+
+    // 15초 세션 중 이 맥박이 발생한 정확한 시점 기록 (HRV 분석용)
+    const elapsedSec = ((performance.now() - measurementStartTime) / 1000).toFixed(2);
+    const instantBpm = rawBpm || bpm;
+    currentSessionBeats.push({
+        beatNum: currentSessionBeats.length + 1,
+        timeSec: elapsedSec,
+        bpm: instantBpm
+    });
 
     // 하트 아이콘 맥박 애니메이션 트리거
     mainHeartIcon.classList.remove('text-slate-600', 'text-rose-500');
@@ -550,9 +531,6 @@ function triggerHeartbeatVisuals(bpm) {
     }, 150);
 }
 
-/* -------------------------------------------------------------
-   STREAMING_CHUNK: 디바이스 카메라 및 토치 제어 기능...
-------------------------------------------------------------- */
 // 안드로이드 카메라 스트림 가져오기 및 플래시(Torch) 켜기
 async function startCameraAndTorch() {
     try {
@@ -586,7 +564,7 @@ async function startCameraAndTorch() {
             });
             updateStatusText(true, '카메라 준비 및 플래시 활성');
         } else {
-            updateStatusText(true, '카메라 연결됨 (가급적 밝은 곳 권장)');
+            updateStatusText(true, '카메라 연결됨 (밝은 조명 권장)');
         }
         return true;
     } catch (err) {
@@ -621,9 +599,6 @@ function updateStatusText(isActive, text) {
     }
 }
 
-/* -------------------------------------------------------------
-   STREAMING_CHUNK: 측정 컨트롤 및 스케줄링 관리...
-------------------------------------------------------------- */
 // 심박 측정 시작 프로세스
 async function startMeasurement() {
     if (isMeasuring) return;
@@ -633,6 +608,7 @@ async function startMeasurement() {
     signalBuffer = [];
     filteredSignal = [];
     bpmMovingAverage = [];
+    currentSessionBeats = []; // 신규 측정을 시작할 때 변동 어레이 초기화
     bpmValue.textContent = '--';
     measureInstruction.innerHTML = '손가락 밀착 후<br>움직이지 마세요';
     
@@ -653,17 +629,14 @@ async function startMeasurement() {
         return;
     }
 
-    // 오디오 컨텍스트 사전 구동
     heartSound.init();
 
     measurementStartTime = performance.now();
     
-    // 타임아웃 및 정밀 프로그레스링 애니메이션 개시
     measurementTimer = setInterval(() => {
         const elapsed = performance.now() - measurementStartTime;
         measurementProgress = Math.min((elapsed / measurementDuration) * 100, 100);
         
-        // 원형 대시 옵셋 계산 (반지름 r=92, 전체 둘레 길이는 578)
         const offset = 578 - (578 * measurementProgress) / 100;
         progressRing.style.strokeDashoffset = offset;
 
@@ -672,7 +645,6 @@ async function startMeasurement() {
         }
     }, 100);
 
-    // 알고리즘 프레임 주기 작동 개시
     lastFrameTime = performance.now();
     animationFrameId = requestAnimationFrame(processVideoFrame);
 }
@@ -684,32 +656,40 @@ function completeMeasurement() {
     stopCameraAndTorch();
     isMeasuring = false;
 
-    // 최종 산정 심박 추출
     if (currentMode === 'camera') {
         if (bpmMovingAverage.length > 0) {
-            // 평균값 추출
             finalBpmResult = Math.round(
                 bpmMovingAverage.reduce((a, b) => a + b, 0) / bpmMovingAverage.length
             );
         } else {
-            // 충분한 심박 신호를 검지하지 못한 경우 난수 보정 처리 방지 및 안내
             finalBpmResult = 0;
         }
     } else {
-        // 시뮬레이션의 경우 정상 성인 맥박 구간으로 결과 획득
         finalBpmResult = 70 + Math.floor(Math.random() * 12);
+        // 시뮬레이션 모드에서도 임의의 15초 맥박 타임라인 생성
+        let fakeTime = 0;
+        let beatCount = 1;
+        while(fakeTime < 15.0) {
+            fakeTime += (60 / (finalBpmResult + (Math.random() * 10 - 5)));
+            if (fakeTime < 15.0) {
+                currentSessionBeats.push({
+                    beatNum: beatCount++,
+                    timeSec: fakeTime.toFixed(2),
+                    bpm: finalBpmResult + Math.floor(Math.random() * 6 - 3)
+                });
+            }
+        }
     }
 
-    // UI 변환
-    progressRing.style.strokeDashoffset = "578"; // 원복
+    progressRing.style.strokeDashoffset = "578"; 
     measureInstruction.innerHTML = '터치하여 측정 시작';
     
     if (finalBpmResult > 0) {
         bpmValue.textContent = finalBpmResult;
         mainHeartIcon.className = "fa-solid fa-heart text-rose-500 text-4xl";
         
-        // 로컬스토리지에 신규 기록 보관
-        saveToHistory(finalBpmResult);
+        // 상세 수집된 변동값 로그(currentSessionBeats)를 함께 인자로 전달
+        saveToHistory(finalBpmResult, currentSessionBeats);
         showPopupMessage(`측정 완료: ${finalBpmResult} BPM`);
     } else {
         bpmValue.textContent = '--';
@@ -739,20 +719,18 @@ function abortMeasurement() {
     }
 }
 
-/* -------------------------------------------------------------
-   STREAMING_CHUNK: 측정 이력 데이터 관리 (로컬스토리지)...
-------------------------------------------------------------- */
 // 데이터베이스에 상응하는 브라우저 내장 스토리지 저장 및 렌더링
-function saveToHistory(bpm) {
+function saveToHistory(bpm, beats = []) {
     const history = JSON.parse(localStorage.getItem('pulse_history') || '[]');
     const newRecord = {
         id: Date.now(),
         bpm: bpm,
         date: new Date().toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
-        tag: determineBpmTag(bpm)
+        tag: determineBpmTag(bpm),
+        beats: beats // 상세 15초 시계열 변동 데이터 보관 추가
     };
     
-    history.unshift(newRecord); // 가장 앞에 신규 배치
+    history.unshift(newRecord); 
     localStorage.setItem('pulse_history', JSON.stringify(history));
     renderHistory();
 }
@@ -798,9 +776,6 @@ function renderHistory() {
     });
 }
 
-/* -------------------------------------------------------------
-   STREAMING_CHUNK: 공통 사용자 경험 편의 보강 도구...
-------------------------------------------------------------- */
 // 커스텀 화면 노티 박스
 function showPopupMessage(msg) {
     const alertBox = document.createElement('div');
@@ -812,9 +787,6 @@ function showPopupMessage(msg) {
     setTimeout(() => { alertBox.remove(); }, 2800);
 }
 
-/* -------------------------------------------------------------
-   STREAMING_CHUNK: 이벤트 리스너 바인딩 및 부트스트래핑...
-------------------------------------------------------------- */
 // 이벤트 리스너 등록
 btnPulseTrigger.addEventListener('click', () => {
     if (isMeasuring) {
@@ -873,17 +845,23 @@ btnDownloadCsv.addEventListener('click', () => {
     // MS 엑셀 한글 깨짐 방지용 BOM 코드 주입
     let csvContent = "\uFEFF";
     
-    // 헤더 정의
-    csvContent += "ID(Timestamp),측정 시간,심박수(BPM),상태 설명\n";
+    // 상세 시계열 추적이 가능한 CSV 헤더 정의
+    csvContent += "측정 일시,세션 평균 심박수(BPM),맥박 순번,경과 시간(초),순간 심박수(BPM)\n";
     
     // 데이터 행 작성
     history.forEach(item => {
-        const statusLabel = item.tag ? item.tag.label : '미정';
-        // 콤마(,)가 포함될 수 있는 필드 이스케이프 처리
-        const escapedDate = `"${item.date.replace(/"/g, '""')}"`;
-        const escapedStatus = `"${statusLabel.replace(/"/g, '""')}"`;
+        const dateStr = item.date;
+        const avgBpm = item.bpm;
         
-        csvContent += `${item.id},${escapedDate},${item.bpm},${escapedStatus}\n`;
+        // 해당 세션에 15초 시계열 기록이 있는 경우
+        if (item.beats && item.beats.length > 0) {
+            item.beats.forEach(beat => {
+                csvContent += `"${dateStr}",${avgBpm},${beat.beatNum},${beat.timeSec},${beat.bpm}\n`;
+            });
+        } else {
+            // 상세 비트 기록이 없는 이전 구형 로그의 경우 하위 호환성 유지 출력
+            csvContent += `"${dateStr}",${avgBpm},1,15.00,${avgBpm}\n`;
+        }
     });
     
     // Blob 객체 생성 및 파일 다운로드 트리거
@@ -893,14 +871,14 @@ btnDownloadCsv.addEventListener('click', () => {
     
     const today = new Date().toISOString().split('T')[0];
     link.setAttribute("href", url);
-    link.setAttribute("download", `heart_rate_history_${today}.csv`);
+    link.setAttribute("download", `heart_rate_timeseries_${today}.csv`);
     link.style.visibility = 'hidden';
     
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     
-    showPopupMessage('CSV 파일이 저장되었습니다.');
+    showPopupMessage('상세 시계열 CSV 파일이 저장되었습니다.');
 });
 
 // 초기 구동 실행부
